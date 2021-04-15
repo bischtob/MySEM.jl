@@ -1,0 +1,13 @@
+name = "MySEM.jl"
+uuid = "3b8d7df4-c265-4781-99a3-8725d828b105"
+authors = ["bischtob <tobias.bischoff@pm.me> and contributors"]
+version = "0.1.0"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
