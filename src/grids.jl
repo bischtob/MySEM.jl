@@ -74,13 +74,38 @@ end
 
 # |. . . , . . . , . . .| = Ne * (P + 1) - (Ne-1) = Ne * P + Ne - Ne + 1 = Ne * P + 1
 
-function lobatto_gauss(P::Integer,DFloat)
+"""
+  QuadratureStyle
+"""
+abstract type AbstractQuadratureStyle end
 
-    xgl=zeros(DFloat,P)
-    wgl=zeros(DFloat,P)
+Base.@kwdef struct LegendreGaussLobatto{𝒯} <: AbstractQuadratureStyle
+    polynomial_order::𝒯
+end
 
-    p=P-1; #Order of the Polynomials
-    ph=floor(typeof(P), (p+1)/2 )
+function Base.getproperty(quadrature_style::AbstractQuadratureStyle, name::Symbol)
+    if name == :npoints
+        return quadrature_style.polynomial_order + 1
+    elseif name == :interpolation_points
+        return create_interpolation_points(quadrature_style)
+    elseif name == :quadrature_weights
+        return create_quadrature_weights(quadrature_style)
+    else
+        return getfield(quadrature_style, name)
+    end
+end
+
+function Base.propertynames(::AbstractQuadratureStyle)
+    return (:polynomial_order, :npoints, :interpolation_points, :quadrature_weights)
+end
+
+function create_interpolation_points(quadrature_style::LegendreGaussLobatto)
+    polynomial_order = quadrature_style.polynomial_order
+    npoints          = quadrature_style.npoints
+
+    xgl=zeros(DFloat,npoints)
+    p= polynomial_order #Order of the Polynomials
+    ph=floor(typeof(npoints), (p+1)/2 )
 
     for i=1:ph
         x=cos( (2*i-1)*pi/(2*p+1) )
@@ -94,7 +119,6 @@ function lobatto_gauss(P::Integer,DFloat)
             end
         end
         xgl[p+2-i]=x
-        wgl[p+2-i]=2/(p*(p+1)*L0^2)
     end
 
     #Check for Zero Root
@@ -102,19 +126,54 @@ function lobatto_gauss(P::Integer,DFloat)
         x=0
         (L0,L0_1,L0_2)=legendre_poly(p,x)
         xgl[ph+1]=x
-        wgl[ph+1]=2/(p*(p+1)*L0^2)
     end
 
     #Find remainder of roots via symmetry
     for i=1:ph
         xgl[i]=-xgl[p+2-i]
+    end
+
+    return xgl
+end
+
+function create_quadrature_weights(quadrature_style::LegendreGaussLobatto)
+    polynomial_order = quadrature_style.polynomial_order
+    npoints          = quadrature_style.npoints
+
+    wgl=zeros(DFloat,npoints)
+    p=polynomial_order; #Order of the Polynomials
+    ph=floor(typeof(npoints), (p+1)/2 )
+
+    for i=1:ph
+        x=cos( (2*i-1)*pi/(2*p+1) )
+        for k=1:20
+            (L0,L0_1,L0_2)=legendre_poly(p,x); #Compute Nth order Derivatives of Legendre Polys
+            #Get new Newton Iteration
+            dx=-(1-x^2)*L0_1/(-2*x*L0_1 + (1-x^2)*L0_2)
+            x=x+dx
+            if (abs(dx) < 1.0e-20)
+                break
+            end
+        end
+        wgl[p+2-i]=2/(p*(p+1)*L0^2)
+    end
+
+    #Check for Zero Root
+    if (p+1 != 2*ph)
+        x=0
+        (L0,L0_1,L0_2)=legendre_poly(p,x)
+        wgl[ph+1]=2/(p*(p+1)*L0^2)
+    end
+
+    #Find remainder of roots via symmetry
+    for i=1:ph
         wgl[i]=+wgl[p+2-i]
     end
-    return xgl,wgl
-end #function
+
+    return wgl
+end
 
 function legendre_poly(p,x)
-
     L1, L1_1, L1_2 = 0,0,0
     L0, L0_1, L0_2 = 1,0,0
 
@@ -135,59 +194,86 @@ end
 """
 abstract type AbstractDomain end
 
-struct IntervalDomain{𝒯} <: AbstractDomain
+Base.@kwdef struct IntervalDomain{𝒯} <: AbstractDomain
     min::𝒯
     max::𝒯
+
+    function IntervalDomain{𝒯}(min, max)
+        @assert min < max
+        new{𝒯}(min, max)
+    end
 end
 
-function IntervalDomain(; min, max)
-    return IntervalDomain(min, max)
-end
+Base.length(domain::IntervalDomain) = domain.max - domain.min
+
+Base.size(domain::IntervalDomain) = length(domain)
 
 """
   Topology
   "Informally, a topology tells how elements of a set of points relate spatially to each other." (wikipedia.org)
 """
-abstract type AbstractElementTopology end
+abstract type AbstractTopology end
 
-struct IntervalTopology{𝒯} <: AbstractElementTopology
-    interface_locations::𝒯
+Base.@kwdef struct ElementTopology{𝒯,𝒰} <: AbstractTopology
+    domain::𝒯
+    nelements::𝒰
 end
 
-function RegularIntervalTopology(; domain::IntervalDomain, nelements::Int)
-    min = domain.min
-    max = domain.max
-    interface_location = Array(range(min, max, length = nelments+1))
-
-    return IntervalTopology(interface_locations)
+function Base.getproperty(topology::ElementTopology, name::Symbol)
+    if name == :nfaces
+        return topology.nelements + 1
+    elseif name == :interface_locations
+        return create_interface_locations(topology.domain, topology.nfaces)
+    else
+        return getfield(topology, name)
+    end
 end
+
+function Base.propertynames(::ElementTopology)
+    return (:domain, :nelements, :nfaces, :interface_locations)
+end
+
+function create_interface_locations(domain::IntervalDomain, nfaces::Int)
+    return Array(range(domain.min, domain.max, length = nfaces))
+end
+
+"""
+  ContinuousStyle
+"""
+abstract type AbstractContinuityStyle end
+
+struct ContinuousStyle <: AbstractContinuityStyle end
 
 """
   Grid
 """
 abstract type AbstractGrid end
 
-struct SpectralElementGrid{𝒯,𝒰,𝒱} <: AbstractGrid
-    points::𝒯
-    #periodicity
-    #storage_map
+Base.@kwdef struct SpectralElementGrid{𝒯,𝒰,𝒱} <: AbstractGrid
+    topology::𝒯
     quadrature_style::𝒰
     continuity_style::𝒱
 end
 
-function SpectralElementGrid(; topology, quadrature_style, continuity_style)
-    points = _create_grid_points(continuity_style, topology, quadrature_style)
-    return SpectralElementGrid(points, quadrature_style, continuity_style)
+function Base.getproperty(grid::SpectralElementGrid, name::Symbol)
+    if name == :points
+        return create_grid_points(grid.continuity_style, grid.topology, grid.quadrature_style)
+    else
+        return getfield(grid, name)
+    end
 end
 
-function _create_grid_points(::ContinuousStyle, topology::RegularInterval, quadrature_style::𝒯) where {𝒯}
-    # Unpack relevant parameters
-    x_faces   = topology.interface_locations
-    nelements = length(topology.interface_locations) - 1
-    npoints   = quadrature_style.polynomial_order + 1
+function Base.propertynames(::SpectralElementGrid)
+    return (:topology, :quadrature_style, :continuity_style, :points)
+end
 
-    # Create interpolation points
-    ξ = create_interpolation_points(quadrature_style)
+function create_grid_points(::ContinuousStyle, topology::𝒯, quadrature_style::𝒰) where {𝒯,𝒰}
+    # Unpack relevant parameters
+    nelements = topology.nelements
+    x_faces   = topology.interface_locations
+
+    npoints   = quadrature_style.npoints
+    ξ_points  = quadrature_style.interpolation_points
 
     grid_points[1] = x_min
     for i in 1:nelements
@@ -204,7 +290,7 @@ function _create_grid_points(::ContinuousStyle, topology::RegularInterval, quadr
         println((i, i_left, j))
         # calculate interpolation point location
         # relative to left element edge
-        x_relative = 0.5 * (ξ[j] + 1) * dx
+        x_relative = 0.5 * (ξ_points[j] + 1) * dx
         grid_points[i_left + j] = x_left + x_relative
       end
     end
