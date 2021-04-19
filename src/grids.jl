@@ -257,7 +257,7 @@ end
 
 function Base.getproperty(grid::SpectralElementGrid, name::Symbol)
     if name == :points
-        return create_grid_points(grid.continuity_style, grid.topology, grid.quadrature_style)
+        return create_grid_points(grid.topology, grid.quadrature_style, grid.continuity_style)
     else
         return getfield(grid, name)
     end
@@ -267,7 +267,7 @@ function Base.propertynames(::SpectralElementGrid)
     return (:topology, :quadrature_style, :continuity_style, :points)
 end
 
-function create_grid_points(::ContinuousStyle, topology::𝒯, quadrature_style::𝒰) where {𝒯,𝒰}
+function create_grid_points(topology::𝒯, quadrature_style::𝒰, ::ContinuousStyle) where {𝒯,𝒰}
     # Unpack relevant parameters
     nelements = topology.nelements
     x_faces   = topology.interface_locations
